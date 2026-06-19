@@ -6,12 +6,11 @@
 import { environment } from '../../environments/environment'
 import { ComplaintService } from '../Services/complaint.service'
 import { UserService } from '../Services/user.service'
-import { Component, ElementRef, type OnInit, ViewChild, inject } from '@angular/core'
+import { Component, ElementRef, type OnInit, ViewChild, inject, ChangeDetectionStrategy } from '@angular/core'
 import { UntypedFormControl, Validators, FormsModule, ReactiveFormsModule } from '@angular/forms'
 import { FileUploader, FileUploadModule } from 'ng2-file-upload'
 import { library } from '@fortawesome/fontawesome-svg-core'
 import { faBomb } from '@fortawesome/free-solid-svg-icons'
-import { FormSubmitService } from '../Services/form-submit.service'
 import { TranslateService, TranslateModule } from '@ngx-translate/core'
 import { MatButtonModule } from '@angular/material/button'
 import { MatInputModule } from '@angular/material/input'
@@ -24,6 +23,7 @@ import { MatIconModule } from '@angular/material/icon'
 library.add(faBomb)
 
 @Component({
+  changeDetection: ChangeDetectionStrategy.Eager,
   selector: 'app-complaint',
   templateUrl: './complaint.component.html',
   styleUrls: ['./complaint.component.scss'],
@@ -32,11 +32,12 @@ library.add(faBomb)
 export class ComplaintComponent implements OnInit {
   private readonly userService = inject(UserService)
   private readonly complaintService = inject(ComplaintService)
-  private readonly formSubmitService = inject(FormSubmitService)
   private readonly translate = inject(TranslateService)
 
+  public readonly maxMessageLength = 4096
+
   public customerControl: UntypedFormControl = new UntypedFormControl({ value: '', disabled: true }, [])
-  public messageControl: UntypedFormControl = new UntypedFormControl('', [Validators.required, Validators.maxLength(160)])
+  public messageControl: UntypedFormControl = new UntypedFormControl('', [Validators.required, Validators.maxLength(this.maxMessageLength)])
   @ViewChild('fileControl', { static: true }) fileControl!: ElementRef // For controlling the DOM Element for file input.
   public fileUploadError: any = undefined // For controlling error handling related to file input.
   public uploader: FileUploader = new FileUploader({
@@ -64,7 +65,6 @@ export class ComplaintComponent implements OnInit {
       this.saveComplaint()
       this.uploader.clearQueue()
     }
-    this.formSubmitService.attachEnterKeyHandler('complaint-form', 'submitButton', () => { this.save() })
   }
 
   initComplaint () {

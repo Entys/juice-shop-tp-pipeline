@@ -4,7 +4,7 @@
  */
 
 import { ProductService } from '../Services/product.service'
-import { type AfterViewInit, Component, type OnDestroy, ViewChild, inject } from '@angular/core'
+import { type AfterViewInit, Component, type OnDestroy, ViewChild, inject, ChangeDetectionStrategy } from '@angular/core'
 import { MatPaginator } from '@angular/material/paginator'
 import { type Subscription } from 'rxjs'
 import { MatTableDataSource, MatTable, MatColumnDef, MatHeaderCellDef, MatHeaderCell, MatCellDef, MatCell, MatHeaderRowDef, MatHeaderRow, MatRowDef, MatRow } from '@angular/material/table'
@@ -32,6 +32,7 @@ interface Order {
 }
 
 @Component({
+  changeDetection: ChangeDetectionStrategy.Eager,
   selector: 'app-accounting',
   templateUrl: './accounting.component.html',
   styleUrls: ['./accounting.component.scss'],
@@ -118,9 +119,14 @@ export class AccountingComponent implements AfterViewInit, OnDestroy {
   modifyQuantity (id, value) {
     this.quantityService.put(id, { quantity: value < 0 ? 0 : value }).subscribe({
       next: (quantity) => {
-        const product = this.tableData.find((product) => {
+        const product = this.tableData?.find((product) => {
           return product.id === quantity.ProductId
         })
+
+        if (!product) {
+          this.loadQuantity()
+          return
+        }
 
         this.snackBarHelperService.open(`Quantity for ${product.name} has been updated.`, 'confirmBar')
         this.loadQuantity()

@@ -6,11 +6,10 @@
 import { ConfigurationService } from '../Services/configuration.service'
 import { UserService } from '../Services/user.service'
 import { RecycleService } from '../Services/recycle.service'
-import { Component, type OnInit, ViewChild, inject } from '@angular/core'
+import { Component, type OnInit, ViewChild, inject, ChangeDetectionStrategy } from '@angular/core'
 import { UntypedFormControl, Validators, FormsModule, ReactiveFormsModule } from '@angular/forms'
 import { library } from '@fortawesome/fontawesome-svg-core'
 import { faPaperPlane } from '@fortawesome/free-solid-svg-icons'
-import { FormSubmitService } from '../Services/form-submit.service'
 import { AddressComponent } from '../address/address.component'
 import { TranslateService, TranslateModule } from '@ngx-translate/core'
 import { SnackBarHelperService } from '../Services/snack-bar-helper.service'
@@ -26,6 +25,7 @@ import { MatCardModule, MatCardImage, MatCardContent } from '@angular/material/c
 library.add(faPaperPlane)
 
 @Component({
+  changeDetection: ChangeDetectionStrategy.Eager,
   selector: 'app-recycle',
   templateUrl: './recycle.component.html',
   styleUrls: ['./recycle.component.scss'],
@@ -35,7 +35,6 @@ export class RecycleComponent implements OnInit {
   private readonly recycleService = inject(RecycleService)
   private readonly userService = inject(UserService)
   private readonly configurationService = inject(ConfigurationService)
-  private readonly formSubmitService = inject(FormSubmitService)
   private readonly translate = inject(TranslateService)
   private readonly snackBarHelperService = inject(SnackBarHelperService)
 
@@ -67,8 +66,6 @@ export class RecycleComponent implements OnInit {
 
     this.initRecycle()
     this.findAll()
-
-    this.formSubmitService.attachEnterKeyHandler('recycle-form', 'recycleButton', () => { this.save() })
   }
 
   initRecycle () {

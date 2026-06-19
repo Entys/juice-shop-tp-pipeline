@@ -1,0 +1,56 @@
+name: DevSecOps Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-deploy:
+    name: Build, push & deploy
+    runs-on: [self-hosted, juice-pipeline]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare image vars
+        id: vars
+        run: |
+          REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "image=${REGISTRY}/${REPO_LC}" >> "$GITHUB_OUTPUT"
+          echo "tag=sha-${GITHUB_SHA::7}"      >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login "$REGISTRY" -u "${{ github.actor }}" --password-stdin
+
+      - name: Build image
+        run: |
+          docker build \
+            -t "${{ steps.vars.outputs.image }}:${{ steps.vars.outputs.tag }}" \
+            -t "${{ steps.vars.outputs.image }}:latest" \
+            --label com.projet=devsecops-juice \
+            .
+
+      - name: Push image
+        run: |
+          docker push "${{ steps.vars.outputs.image }}:${{ steps.vars.outputs.tag }}"
+          docker push "${{ steps.vars.outputs.image }}:latest"
+
+      - name: Deploy on OVH
+        run: |
+          docker rm -f juice-shop-app 2>/dev/null || true
+          docker run -d \
+            --name juice-shop-app \
+            --restart unless-stopped \
+            --label com.projet=devsecops-juice \
+            -p 127.0.0.1:3000:3000 \
+            "${{ steps.vars.outputs.image }}:${{ steps.vars.outputs.tag }}"
+          docker ps --filter "label=com.projet=devsecops-juice"
