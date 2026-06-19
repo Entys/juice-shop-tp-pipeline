@@ -51,6 +51,6 @@ jobs:
             --name juice-shop-app \
             --restart unless-stopped \
             --label com.projet=devsecops-juice \
-            -p 127.0.0.1:3000:3000 \
+            -p 127.0.0.1:3003:3000 \
             "${{ steps.vars.outputs.image }}:${{ steps.vars.outputs.tag }}"
           docker ps --filter "label=com.projet=devsecops-juice"
