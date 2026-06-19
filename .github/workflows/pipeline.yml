@@ -8,7 +8,7 @@ on:
 permissions:
   contents: read
   packages: write
-  security-events: writ
+  security-events: write
 
 env:
   REGISTRY: ghcr.io
