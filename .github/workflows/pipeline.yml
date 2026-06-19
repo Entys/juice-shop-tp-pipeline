@@ -8,9 +8,12 @@ on:
 permissions:
   contents: read
   packages: write
+  security-events: writ
 
 env:
   REGISTRY: ghcr.io
+  HOST_PORT: "3003"
+  SECRETS_GATE: "observe"   # "strict" = bloque le run si secret trouvé | "observe" = rapporte sans bloquer
 
 jobs:
   build-deploy:
@@ -21,6 +24,36 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ---------- Sécurité : détection de secrets (fail fast) ----------
+      - name: Secret scan (Gitleaks)
+        run: |
+          if [ "$SECRETS_GATE" = "strict" ]; then EC=1; else EC=0; fi
+          mkdir -p reports
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/repo \
+            zricethezav/gitleaks:latest \
+            dir /repo \
+            --report-format sarif \
+            --report-path /repo/reports/gitleaks.sarif \
+            --exit-code "$EC" \
+            --redact -v
+
+      - name: Upload Gitleaks report (artefact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: reports/gitleaks.sarif
+
+      - name: Upload Gitleaks SARIF to Security tab (best-effort)
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/gitleaks.sarif
+          category: gitleaks
+
+      # ---------- Build / Release ----------
       - name: Prepare image vars
         id: vars
         run: |
@@ -44,13 +77,14 @@ jobs:
           docker push "${{ steps.vars.outputs.image }}:${{ steps.vars.outputs.tag }}"
           docker push "${{ steps.vars.outputs.image }}:latest"
 
+      # ---------- Déploiement ----------
       - name: Deploy on OVH
         run: |
-          docker rm -f juice-shop-app 2>/dev/null || true
+          docker ps -aq --filter "label=com.projet=devsecops-juice" | xargs -r docker rm -f
           docker run -d \
             --name juice-shop-app \
             --restart unless-stopped \
             --label com.projet=devsecops-juice \
-            -p 127.0.0.1:3003:3000 \
+            -p 127.0.0.1:${HOST_PORT}:3000 \
             "${{ steps.vars.outputs.image }}:${{ steps.vars.outputs.tag }}"
           docker ps --filter "label=com.projet=devsecops-juice"
