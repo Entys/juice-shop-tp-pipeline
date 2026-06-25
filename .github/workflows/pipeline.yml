@@ -228,7 +228,7 @@ jobs:
           set +e
           docker run --rm --network host \
             -v "$GITHUB_WORKSPACE/reports":/zap/wrk/:rw \
-            ghcr.io/zaproxy/zaproxy:stable \
+            zaproxy/zap-stable \
             zap-baseline.py -t "http://127.0.0.1:${HOST_PORT}" \
             -r zap-report.html -J zap-report.json
           RC=$?; set -e
