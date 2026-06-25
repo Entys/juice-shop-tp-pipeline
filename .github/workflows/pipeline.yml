@@ -7,45 +7,50 @@ on:
 
 permissions:
   contents: read
-  packages: write
-  security-events: write
+  packages: write           # push sur GHCR
+  security-events: write    # remontée SARIF dans l'onglet Security (si GHAS dispo)
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true   # annule un run precedent encore en cours sur le meme ref
 
 env:
   REGISTRY: ghcr.io
-  HOST_PORT: "3003"
-  SECRETS_GATE: "observe"   # "strict" = bloque le run si secret trouvé | "observe" = rapporte sans bloquer
+  HOST_PORT: "3003"          # port cote OVH (3000 = Grafana)
+  # --- Gates par couche : "strict" = bloque la suite si findings | "observe" = rapporte sans bloquer ---
+  SECRETS_GATE: "observe"
+  SAST_GATE:    "observe"
+  SCA_GATE:     "observe"
+  IMAGE_GATE:   "observe"
+  DAST_GATE:    "observe"
 
 jobs:
-  build-deploy:
-    name: Build, push & deploy
+
+  # ===================== 1. Detection de secrets (Gitleaks) =====================
+  secrets:
+    name: Secret scan (Gitleaks)
     runs-on: [self-hosted, juice-pipeline]
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # ---------- Sécurité : détection de secrets (fail fast) ----------
-      - name: Secret scan (Gitleaks)
+      - uses: actions/checkout@v4
+      - name: Gitleaks
         run: |
-          if [ "$SECRETS_GATE" = "strict" ]; then EC=1; else EC=0; fi
-          mkdir -p reports
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE":/repo \
+          mkdir -p "$GITHUB_WORKSPACE/reports" && chmod 777 "$GITHUB_WORKSPACE/reports"
+          set +e
+          docker run --rm -v "$GITHUB_WORKSPACE":/repo \
             zricethezav/gitleaks:latest \
             dir /repo \
-            --report-format sarif \
-            --report-path /repo/reports/gitleaks.sarif \
-            --exit-code "$EC" \
-            --redact -v
-
-      - name: Upload Gitleaks report (artefact)
+            --report-format sarif --report-path /repo/reports/gitleaks.sarif \
+            --redact -v --exit-code 1
+          RC=$?; set -e
+          echo "Gitleaks exit code: $RC"
+          if [ "$SECRETS_GATE" = "strict" ]; then exit $RC; else exit 0; fi
+      - name: Upload report (artefact)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gitleaks-report
+          name: report-gitleaks
           path: reports/gitleaks.sarif
-
-      - name: Upload Gitleaks SARIF to Security tab (best-effort)
+      - name: Upload SARIF -> Security tab (best-effort)
         if: always()
         continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
@@ -53,17 +58,90 @@ jobs:
           sarif_file: reports/gitleaks.sarif
           category: gitleaks
 
-      # ---------- Build / Release ----------
+  # ===================== 2. SAST - analyse du code (Semgrep) =====================
+  sast:
+    name: SAST (Semgrep)
+    runs-on: [self-hosted, juice-pipeline]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Semgrep
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/reports" && chmod 777 "$GITHUB_WORKSPACE/reports"
+          set +e
+          # --config=auto choisit les regles selon le langage ; alternatives : p/default, p/owasp-top-ten
+          docker run --rm -v "$GITHUB_WORKSPACE":/src \
+            semgrep/semgrep \
+            semgrep scan --config=auto --error \
+            --sarif --output=/src/reports/semgrep.sarif /src
+          RC=$?; set -e
+          echo "Semgrep exit code: $RC"
+          if [ "$SAST_GATE" = "strict" ]; then exit $RC; else exit 0; fi
+      - name: Upload report (artefact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-semgrep
+          path: reports/semgrep.sarif
+      - name: Upload SARIF -> Security tab (best-effort)
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/semgrep.sarif
+          category: semgrep
+
+  # ===================== 3. SCA - analyse des dependances (Trivy) =====================
+  sca:
+    name: SCA (Trivy deps)
+    runs-on: [self-hosted, juice-pipeline]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy filesystem
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/reports" && chmod 777 "$GITHUB_WORKSPACE/reports"
+          set +e
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/src \
+            -v trivy-cache:/root/.cache/ \
+            aquasec/trivy:latest fs /src \
+            --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+            --format sarif --output /src/reports/trivy-fs.sarif \
+            --exit-code 1
+          RC=$?; set -e
+          echo "Trivy fs exit code: $RC"
+          if [ "$SCA_GATE" = "strict" ]; then exit $RC; else exit 0; fi
+      - name: Upload report (artefact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-trivy-fs
+          path: reports/trivy-fs.sarif
+      - name: Upload SARIF -> Security tab (best-effort)
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/trivy-fs.sarif
+          category: trivy-fs
+
+  # ===================== 4. Build & release (GHCR) =====================
+  build:
+    name: Build & push
+    needs: [secrets, sast, sca]     # les 3 gates doivent passer (en observe : toujours OK)
+    runs-on: [self-hosted, juice-pipeline]
+    outputs:
+      image: ${{ steps.vars.outputs.image }}
+      tag:   ${{ steps.vars.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
       - name: Prepare image vars
         id: vars
         run: |
           REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           echo "image=${REGISTRY}/${REPO_LC}" >> "$GITHUB_OUTPUT"
           echo "tag=sha-${GITHUB_SHA::7}"      >> "$GITHUB_OUTPUT"
-
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login "$REGISTRY" -u "${{ github.actor }}" --password-stdin
-
       - name: Build image
         run: |
           docker build \
@@ -71,20 +149,97 @@ jobs:
             -t "${{ steps.vars.outputs.image }}:latest" \
             --label com.projet=devsecops-juice \
             .
-
       - name: Push image
         run: |
           docker push "${{ steps.vars.outputs.image }}:${{ steps.vars.outputs.tag }}"
           docker push "${{ steps.vars.outputs.image }}:latest"
 
-      # ---------- Déploiement ----------
-      - name: Deploy on OVH
+  # ===================== 5. Scan de l'image conteneur (Trivy) =====================
+  image-scan:
+    name: Image scan (Trivy)
+    needs: build
+    runs-on: [self-hosted, juice-pipeline]
+    steps:
+      - name: Trivy image
         run: |
-          docker ps -aq --filter "label=com.projet=devsecops-juice" | xargs -r docker rm -f
+          mkdir -p "$GITHUB_WORKSPACE/reports" && chmod 777 "$GITHUB_WORKSPACE/reports"
+          set +e
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v trivy-cache:/root/.cache/ \
+            -v "$GITHUB_WORKSPACE/reports":/out \
+            aquasec/trivy:latest image \
+            --severity HIGH,CRITICAL --ignore-unfixed \
+            --format sarif --output /out/trivy-image.sarif \
+            --exit-code 1 \
+            "${{ needs.build.outputs.image }}:${{ needs.build.outputs.tag }}"
+          RC=$?; set -e
+          echo "Trivy image exit code: $RC"
+          if [ "$IMAGE_GATE" = "strict" ]; then exit $RC; else exit 0; fi
+      - name: Upload report (artefact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-trivy-image
+          path: reports/trivy-image.sarif
+      - name: Upload SARIF -> Security tab (best-effort)
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/trivy-image.sarif
+          category: trivy-image
+
+  # ===================== 6. Deploiement (OVH) =====================
+  deploy:
+    name: Deploy (OVH)
+    needs: [build, image-scan]      # build pour l'image, image-scan pour l'ordre/gate
+    runs-on: [self-hosted, juice-pipeline]
+    steps:
+      - name: Deploy container
+        run: |
+          docker rm -f juice-shop-app 2>/dev/null || true
           docker run -d \
             --name juice-shop-app \
             --restart unless-stopped \
             --label com.projet=devsecops-juice \
             -p 127.0.0.1:${HOST_PORT}:3000 \
-            "${{ steps.vars.outputs.image }}:${{ steps.vars.outputs.tag }}"
-          docker ps --filter "label=com.projet=devsecops-juice"
+            "${{ needs.build.outputs.image }}:${{ needs.build.outputs.tag }}"
+      - name: Wait for readiness
+        run: |
+          for i in $(seq 1 40); do
+            code=$(docker run --rm --network host curlimages/curl:latest \
+              -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${HOST_PORT}" || true)
+            echo "try $i -> $code"
+            if [ "$code" = "200" ]; then echo "App ready"; exit 0; fi
+            sleep 3
+          done
+          echo "App not ready in time"; exit 1
+
+  # ===================== 7. DAST - analyse dynamique (OWASP ZAP) =====================
+  dast:
+    name: DAST (OWASP ZAP)
+    needs: deploy
+    runs-on: [self-hosted, juice-pipeline]
+    steps:
+      - name: ZAP baseline scan
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/reports" && chmod 777 "$GITHUB_WORKSPACE/reports"
+          set +e
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE/reports":/zap/wrk/:rw \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t "http://127.0.0.1:${HOST_PORT}" \
+            -r zap-report.html -J zap-report.json
+          RC=$?; set -e
+          echo "ZAP exit code: $RC"
+          # ZAP renvoie !=0 des qu'il y a des WARN/FAIL -> en strict, ca bloque
+          if [ "$DAST_GATE" = "strict" ]; then exit $RC; else exit 0; fi
+      - name: Upload report (artefact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-zap
+          path: |
+            reports/zap-report.html
+            reports/zap-report.json
