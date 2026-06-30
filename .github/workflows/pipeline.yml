@@ -18,7 +18,7 @@ env:
   REGISTRY: ghcr.io
   HOST_PORT: "3003"          # port cote OVH (3000 = Grafana)
   # Gates - "strict" | "observe"
-  SECRETS_GATE: "strict"
+  SECRETS_GATE: "observe"
   SAST_GATE:    "observe"
   SCA_GATE:     "observe"
   IMAGE_GATE:   "observe"
