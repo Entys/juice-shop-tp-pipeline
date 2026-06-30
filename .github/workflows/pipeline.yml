@@ -8,16 +8,16 @@ on:
 permissions:
   contents: read
   packages: write           # push sur GHCR
-  security-events: write    # remontée SARIF dans l'onglet Security (si GHAS dispo)
+  security-events: write    # remontée SARIF
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true   # annule un run precedent encore en cours sur le meme ref
+  cancel-in-progress: true # cancel previous run
 
 env:
   REGISTRY: ghcr.io
   HOST_PORT: "3003"          # port cote OVH (3000 = Grafana)
-  # --- Gates par couche : "strict" = bloque la suite si findings | "observe" = rapporte sans bloquer ---
+  # Gates - "strict" | "observe"
   SECRETS_GATE: "observe"
   SAST_GATE:    "observe"
   SCA_GATE:     "observe"
@@ -68,7 +68,6 @@ jobs:
         run: |
           mkdir -p "$GITHUB_WORKSPACE/reports" && chmod 777 "$GITHUB_WORKSPACE/reports"
           set +e
-          # --config=auto choisit les regles selon le langage ; alternatives : p/default, p/owasp-top-ten
           docker run --rm -v "$GITHUB_WORKSPACE":/src \
             semgrep/semgrep \
             semgrep scan --config=auto --error \
@@ -127,7 +126,7 @@ jobs:
   # ===================== 4. Build & release (GHCR) =====================
   build:
     name: Build & push
-    needs: [secrets, sast, sca]     # les 3 gates doivent passer (en observe : toujours OK)
+    needs: [secrets, sast, sca]
     runs-on: [self-hosted, juice-pipeline]
     outputs:
       image: ${{ steps.vars.outputs.image }}
@@ -190,21 +189,35 @@ jobs:
           sarif_file: reports/trivy-image.sarif
           category: trivy-image
 
-  # ===================== 6. Deploiement (OVH) =====================
+  # ===================== 6. Deploiement (OVH) + injection du secret =====================
   deploy:
     name: Deploy (OVH)
-    needs: [build, image-scan]      # build pour l'image, image-scan pour l'ordre/gate
+    needs: [build, image-scan]
     runs-on: [self-hosted, juice-pipeline]
     steps:
+      - name: Fetch secret from OpenBao
+        id: secret
+        run: |
+          # lecture du secret avec le token CI restreint (jamais le root token)
+          B64=$(docker exec -e BAO_TOKEN="${{ secrets.VAULT_TOKEN }}" openbao \
+            bao kv get -field=jwt_private_key_b64 secret/juice-shop)
+          if [ -z "$B64" ]; then echo "Secret vide -> abort"; exit 1; fi
+          echo "::add-mask::$B64"
+          echo "jwt_b64=$B64" >> "$GITHUB_OUTPUT"
+
       - name: Deploy container
+        env:
+          JWT_B64: ${{ steps.secret.outputs.jwt_b64 }}
         run: |
           docker rm -f juice-shop-app 2>/dev/null || true
           docker run -d \
             --name juice-shop-app \
             --restart unless-stopped \
             --label com.projet=devsecops-juice \
+            -e JWT_PRIVATE_KEY="$JWT_B64" \
             -p 127.0.0.1:${HOST_PORT}:3000 \
             "${{ needs.build.outputs.image }}:${{ needs.build.outputs.tag }}"
+
       - name: Wait for readiness
         run: |
           for i in $(seq 1 40); do
@@ -233,7 +246,6 @@ jobs:
             -r zap-report.html -J zap-report.json
           RC=$?; set -e
           echo "ZAP exit code: $RC"
-          # ZAP renvoie !=0 des qu'il y a des WARN/FAIL -> en strict, ca bloque
           if [ "$DAST_GATE" = "strict" ]; then exit $RC; else exit 0; fi
       - name: Upload report (artefact)
         if: always()
