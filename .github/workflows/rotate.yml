@@ -1,0 +1,49 @@
+name: Rotate JWT secret
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  HOST_PORT: "3003"
+
+jobs:
+  rotate:
+    name: Rotate & redeploy
+    runs-on: [self-hosted, juice-pipeline]
+    steps:
+      - name: Generate new key, store in OpenBao, redeploy
+        run: |
+          NEWKEY_B64=$(docker run --rm alpine/openssl genrsa 2048 2>/dev/null | base64 -w0)
+          if [ -z "$NEWKEY_B64" ]; then echo "Generation cle echouee"; exit 1; fi
+          echo "::add-mask::$NEWKEY_B64"
+
+          docker exec -e BAO_TOKEN="${{ secrets.VAULT_ROTATE_TOKEN }}" openbao \
+            bao kv put secret/juice-shop jwt_private_key_b64="$NEWKEY_B64"
+          echo "Nouvelle cle stockee dans OpenBao (nouvelle version)."
+
+          IMAGE_LC=$(echo "${REGISTRY}/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          docker rm -f juice-shop-app 2>/dev/null || true
+          docker run -d \
+            --name juice-shop-app \
+            --restart unless-stopped \
+            --label com.projet=devsecops-juice \
+            -e JWT_PRIVATE_KEY="$NEWKEY_B64" \
+            -p 127.0.0.1:${HOST_PORT}:3000 \
+            "${IMAGE_LC}:latest"
+
+      - name: Wait for readiness
+        run: |
+          for i in $(seq 1 40); do
+            code=$(docker run --rm --network host curlimages/curl:latest \
+              -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${HOST_PORT}" || true)
+            echo "try $i -> $code"
+            if [ "$code" = "200" ]; then echo "App ready avec la nouvelle cle"; exit 0; fi
+            sleep 3
+          done
+          echo "App not ready in time"; exit 1
