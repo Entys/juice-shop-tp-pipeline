@@ -48,7 +48,7 @@ push main/master
 ### Réponse aux critères du sujet (Juice Shop)
 
 **Chaîne CI/CD build → test → release → déploiement**
-Le pipeline couvre le build (job `build`, image Docker), la release (push vers GHCR avec tag `sha-<commit>` + `latest`) et le déploiement (job `deploy` sur OVH). ⚠️ Il n'y a en revanche **pas de job de test applicatif** (unit/API/e2e) avant le build — voir [pistes d'amélioration](#pistes-damélioration--juice-shop).
+Le pipeline couvre le build (job `build`, image Docker), la release (push vers GHCR avec tag `sha-<commit>` + `latest`) et le déploiement (job `deploy` sur OVH). Il n'y a en revanche **pas de job de test applicatif** (unit/API/e2e) avant le build — voir [pistes d'amélioration](#pistes-damélioration--juice-shop).
 
 **Analyse du code source (SAST)**
 Job `sast` : Semgrep (`--config=auto`) scanne l'intégralité du dépôt à chaque run.
