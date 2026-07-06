@@ -94,13 +94,6 @@ Tous les gates sont actuellement en mode `observe` (audit sans blocage), un choi
 - Absence de job de **tests fonctionnels** (`npm test`, Cypress) dans la CI avant le build : rien ne garantit qu'une régression fonctionnelle soit détectée avant déploiement.
 - Le déploiement se fait directement sur l'hôte Docker de production/démo (pas d'environnement de staging isolé) : le DAST s'exécute donc contre l'environnement réellement exposé.
 
-### Pistes d'amélioration — Juice Shop
-
-- Ajouter un job `test` (unit/API/e2e) entre `sast`/`sca` et `build`, bloquant en cas d'échec.
-- Passer progressivement les gates en `strict`, en commençant par `SECRETS_GATE` (aucun secret ne devrait légitimement être commité) puis `IMAGE_GATE`/`SCA_GATE` une fois une baseline de vulnérabilités triée/acceptée.
-- Isoler le déploiement `deploy`/`dast` dans un environnement de test dédié (staging) distinct de la démo publique.
-- Ajouter une politique de rétention/format centralisé des rapports (ex. DefectDojo) plutôt que des artefacts épars par run.
-
 ---
 
 ## 2. Gestion des secrets — OpenBao (volet WrongSecrets)
