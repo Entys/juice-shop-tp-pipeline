@@ -170,10 +170,3 @@ Workflow planifié (`cron: '0 3 * * 1'`, tous les lundis à 3h) ou déclenchable
 - Masquage systématique des valeurs sensibles dans les logs CI (`::add-mask::`).
 - Rotation planifiée réduisant la fenêtre d'exposition en cas de fuite non détectée.
 
-### Limites / pistes d'amélioration — WrongSecrets
-
-- La clé historique codée en dur (`hardcodedPrivateKey`) **reste présente dans le code** comme repli : si l'application démarre hors CI/CD (ex. `npm start` local, ou un déploiement mal configuré sans `JWT_PRIVATE_KEY`), elle utilise silencieusement cette clé publique et connue. Une amélioration possible serait un *fail-closed* (refuser de démarrer sans clé injectée) en environnement de production.
-- Pas de séparation de secrets par environnement (un seul chemin `secret/juice-shop` dans OpenBao, pas de `secret/juice-shop/staging` vs `prod`).
-- La rotation redéploie le conteneur en substituant directement la clé : les JWT émis avec l'ancienne clé sont invalidés sans mécanisme de transition (pas de double-clé/`kid` pour une rotation sans coupure de session).
-- Le provisioning d'OpenBao lui-même (installation, politiques, tokens) n'est pas versionné dans ce dépôt (pas d'Infrastructure-as-Code) : il est configuré manuellement sur le serveur, ce qui limite la traçabilité et la reproductibilité.
-- Pas d'audit automatisé des accès au coffre (revue des logs OpenBao) intégré à la CI.
